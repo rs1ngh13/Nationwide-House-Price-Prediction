@@ -44,7 +44,7 @@ for page_num in range(1, 4):
     if page_num > 1:
         page_url = f"{base_url}/{page_num}_p/"
         driver.get(page_url)
-        print(f"🌐 Navigated to page {page_num}: {page_url}")
+        print(f"Went to page {page_num}: {page_url}")
         time.sleep(5)
 
     #scroll to bottom of page to load all listings in html

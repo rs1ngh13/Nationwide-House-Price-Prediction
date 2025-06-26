@@ -1,75 +1,107 @@
-from bs4 import BeautifulSoup
+import time
+import random
+from scrape_data import extract_zillow_details 
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from undetected_chromedriver import Chrome
 
-def extract_zillow_details(html):
-    soup = BeautifulSoup(html, 'html.parser')
-    data = {}
+#initialize browser and website
+driver = Chrome()
+driver.get("https://www.zillow.com/")
 
-    #gather price
-    price = soup.select_one("span.price-text")
-    if not price:
-        price = soup.select_one('span[data-testid="price"]')
-    data["price"] = price.text.strip() if price else None
+#locate search bar and type city name with individual strokes
+search_bar = WebDriverWait(driver, 10).until(
+    EC.presence_of_element_located((By.XPATH, '//input[@placeholder="Enter an address, neighborhood, city, or ZIP code"]'))
+)
+for char in "Stamford":
+    search_bar.send_keys(char)
+    time.sleep(0.1)
+search_bar.send_keys(Keys.RETURN)
+time.sleep(5)
 
-    #gather address data (specifically city, state, zipcode)
-    address_tag = soup.select_one('h1.Text-c11n-8-109-3__sc-aiai24-0')
-    if not address_tag:
-        address_tag = soup.select_one('h1.Text-c11n-8-111-0__sc-aiai24-0')
-    if address_tag:
-        full_address = address_tag.text.strip()
-        parts = full_address.split(",")
-        if len(parts) >= 2:
-            city_state_zip = parts[-1].strip()
-            if len(parts) >= 3:
-                city = parts[-2].strip()
-                data["address"] = f"{city}, {city_state_zip}"
+#deal with pop-up if happens
+try:
+    skip_button = WebDriverWait(driver, random.uniform(2.5, 5)).until(
+        EC.element_to_be_clickable((By.XPATH, '//button[contains(text(), "Skip this question")]'))
+    )
+    driver.execute_script("arguments[0].scrollIntoView(true);", skip_button)
+    time.sleep(0.5)
+    driver.execute_script("arguments[0].click();", skip_button)
+    print("got past pop up")
+except Exception as e:
+    print("you suck, give up", e)
+
+#base url
+current_url = driver.current_url.split("?")[0].rstrip('/')
+base_url = current_url if not current_url.endswith("/") else current_url[:-1]
+
+all_links = set()
+
+#urls for the next pages, up to 3 pages
+for page_num in range(1, 4):
+    if page_num > 1:
+        page_url = f"{base_url}/{page_num}_p/"
+        driver.get(page_url)
+        print(f"Went to page {page_num}: {page_url}")
+        time.sleep(5)
+
+    #scroll to bottom of page to load all listings in html
+    try:
+        scroll_container = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.ID, "search-page-list-container"))
+        )
+
+        last_scroll_position = 0
+        end_page_scroll = 0
+        for _ in range(8):  
+            driver.execute_script("arguments[0].scrollTop += 1000;", scroll_container)
+            time.sleep(random.uniform(0.6, 1.2))
+
+            current_scroll = driver.execute_script("return arguments[0].scrollTop;", scroll_container)
+            if current_scroll == last_scroll_position:
+                end_page_scroll += 1
+                if end_page_scroll >= 2:
+                    break
             else:
-                data["address"] = city_state_zip
-        else:
-            data["address"] = full_address
-    else:
-        data["address"] = None
+                end_page_scroll = 0
+            last_scroll_position = current_scroll
 
+    except Exception as e:
+        print("Scrolling failed", e)
 
-    #bed, bathroom, squarefoot data
-    bbs = {}
-    bbs_containers = soup.select('[data-testid="bed-bath-sqft-fact-container"]')
-    for container in bbs_containers:
-        text = container.get_text(separator=" ").lower()
-        if "bed" in text:
-            bbs["beds"] = text.strip()
-        elif "bath" in text:
-            bbs["baths"] = text.strip()
-        elif "sqft" in text:
-            bbs["sqft"] = text.strip()
-    data.update(bbs)
+    #locate tiles that are listings
+    tiles = WebDriverWait(driver, 10).until(
+        EC.presence_of_all_elements_located((By.XPATH, '//ul[contains(@class, "photo-cards")]/li'))
+    )
+    print(f"Page {page_num}: Found {len(tiles)} listings.")
 
-    #at a glance information 
-    at_glance = soup.select('[data-testid="at-a-glance"] span')
-    if not at_glance:
-        at_glance = soup.select('div[aria-label="At a glance facts"] span')
-    data["at_a_glance"] = [x.text.strip() for x in at_glance if x.text.strip()]
+    for tile in tiles:
+        try:
+            links = tile.find_elements(By.TAG_NAME, 'a')
+            for link in links:
+                href = link.get_attribute("href")
+                if href and "zillow.com/homedetails" in href:
+                    all_links.add(href.split("?")[0])
+        except:
+            continue
 
-    #facts and feature section
-    facts = soup.select('[data-testid="fact-category"] span.Text-c11n-8-109-3__sc-aiai24-0')
-    if not facts:
-        facts = soup.select('div[data-testid="fact-category"] span')
-    data["facts_features"] = [f.text.strip() for f in facts if f.text.strip()]
+print(f"Total unique listings collected over 3 pages: {len(all_links)}")
 
-    #school ratings
-    school_data = []
-    school_section = soup.find("h5", string=lambda t: t and "GreatSchools rating" in t)
-    if school_section:
-        school_list = school_section.find_next("ul")
-        if school_list:
-            for li in school_list.find_all("li", recursive=False):
-                spans = li.find_all("span")
-                ratings = [s.text.strip() for s in spans if s.text.strip()]
-                if len(ratings) >= 3:
-                    school_data.append({ 
-                        "school_level": ratings[2],
-                        "rating": ratings[0]
-                    })
-    data["school_ratings"] = school_data
-    return data
+#extract data from listings
+for i, url in enumerate(list(all_links)[:10]):  
+    try:
+        print(f"Listing {i+1}: {url}")
+        driver.get(url)
+        WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.TAG_NAME, "h1")))
+        time.sleep(random.uniform(2.5, 5))
 
+        html = driver.page_source
+        data = extract_zillow_details(html)
+        print(f"Data for listing {i+1}:\n{data}\n")
 
+    except Exception as e:
+        print(f"Couldn't get data for listing {i+1}: {e}")
+
+driver.quit()

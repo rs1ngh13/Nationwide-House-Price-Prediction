@@ -43,12 +43,6 @@ def extract_zillow_details(html):
             bbs["sqft"] = text.strip()
     data.update(bbs)
 
-    #at a glance information 
-    at_glance = soup.select('[data-testid="at-a-glance"] span')
-    if not at_glance:
-        at_glance = soup.select('div[aria-label="At a glance facts"] span')
-    data["at_a_glance"] = [x.text.strip() for x in at_glance if x.text.strip()]
-
     #facts and feature section
     facts = soup.select('[data-testid="fact-category"] span.Text-c11n-8-109-3__sc-aiai24-0')
     if not facts:

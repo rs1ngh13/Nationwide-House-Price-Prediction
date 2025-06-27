@@ -12,6 +12,7 @@ from undetected_chromedriver import Chrome
 def initialize_browser():
     driver = Chrome()
     driver.maximize_window()
+    driver.set_page_load_timeout(60)
     return driver
 
 #locate search bar and type city name with individual strokes
@@ -57,7 +58,7 @@ def scroll_page(driver):
     except Exception:
         pass
 
-def collect_listings(driver, base_url, num_pages=2):
+def collect_listings(driver, base_url, num_pages=1):
     all_links = set()
 
     for page in range(1, num_pages+1):
@@ -82,7 +83,7 @@ def collect_listings(driver, base_url, num_pages=2):
 
 def extract_data(driver, links, city):
     listing_data = []
-    for i, url in enumerate(links[:3]):
+    for i, url in enumerate(links):
         try:
             driver.get(url)
             WebDriverWait(driver, 20).until(
@@ -111,14 +112,26 @@ def main():
     cities_df = pd.read_excel("city_names.xlsx")  
     all_data = []
     driver = initialize_browser()
+    # num_cities = 5                                                     #comment out
+    # cities = cities_df["city_state"].dropna().unique()[:num_cities]     #comment out
+
+    # for city in cities:
     for city in cities_df["city_state"].dropna().unique():
         print(f"\n-----Scraping {city}-----")
-        search_city(driver, city)
-        deal_with_pop_up(driver)
+        try:
+            search_city(driver, city)
+            deal_with_pop_up(driver)
+        except Exception as e:
+            print(f"Skipping {city} due to error: {e}")
+            continue
         base = urls(driver)
-        links = collect_listings(driver, base)
+        try:
+            links = collect_listings(driver, base)
+            data = extract_data(driver, links, city)
+        except Exception as e:
+            print(f"Error scraping listings for {city}: {e}")
+            continue
         print(f"  Found {len(links)} listing URLs")
-        data = extract_data(driver, links, city)
         print(f"  Extracted {len(data)} records")
         all_data.extend(data)
     driver.quit()
